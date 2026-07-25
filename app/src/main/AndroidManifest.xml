@@ -29,6 +29,11 @@
             android:exported="false"
             android:label="@string/settings_title" />
 
+        <activity
+            android:name=".PackageListActivity"
+            android:exported="false"
+            android:label="包列表" />
+
         <service
             android:name=".TermService"
             android:exported="false" />

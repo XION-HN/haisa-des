@@ -159,6 +159,13 @@
             android:layout_marginTop="8dp"
             android:text="刷新包索引" />
 
+        <Button
+            android:id="@+id/btn_open_pkg_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="打开包列表（已装/可升级/安装）" />
+
         <TextView
             android:id="@+id/pkg_index_output"
             android:layout_width="match_parent"
@@ -178,5 +185,13 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="安装包（输入包名）" />
+
+        <Button
+            android:id="@+id/btn_uninstall_pkg"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="24dp"
+            android:text="卸载包（输入包名）" />
     </LinearLayout>
 </ScrollView>

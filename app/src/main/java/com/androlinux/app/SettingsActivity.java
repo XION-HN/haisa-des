@@ -6,6 +6,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -118,8 +119,50 @@ public class SettingsActivity extends Activity {
             });
         });
 
+        Button btnOpenPkgList = findViewById(R.id.btn_open_pkg_list);
+        btnOpenPkgList.setOnClickListener(v -> startActivity(new Intent(this, PackageListActivity.class)));
+
         Button btnInstallPkg = findViewById(R.id.btn_install_pkg);
         btnInstallPkg.setOnClickListener(v -> showInstallDialog(indexHolder));
+
+        Button btnUninstallPkg = findViewById(R.id.btn_uninstall_pkg);
+        btnUninstallPkg.setOnClickListener(v -> showUninstallDialog());
+    }
+
+    /** 弹出输入框让用户输入包名，调用卸载（不需要索引，直接按已装记录卸载） */
+    private void showUninstallDialog() {
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        input.setHint("包名，如 python");
+        new AlertDialog.Builder(this)
+            .setTitle("卸载包")
+            .setMessage("卸载将删除该包独有的文件，被其他包共享的库会保留。\n注意：不会自动卸载依赖。")
+            .setView(input)
+            .setPositiveButton("卸载", (DialogInterface d, int w) -> {
+                String name = input.getText().toString().trim();
+                if (name.isEmpty()) return;
+                uninstallByName(name);
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void uninstallByName(String name) {
+        mPkgOutput.setVisibility(View.VISIBLE);
+        mPkgOutput.setText("卸载 " + name + " …");
+        PackageManager.uninstallPackage(name, new PackageManager.Callback() {
+            @Override public void onProgress(String msg) {
+                mPkgOutput.setText(msg);
+            }
+            @Override public void onSuccess(String summary) {
+                mPkgOutput.setText(summary);
+                Toast.makeText(SettingsActivity.this, "卸载完成", Toast.LENGTH_SHORT).show();
+            }
+            @Override public void onError(String message) {
+                mPkgOutput.setText("卸载失败: " + message);
+                Toast.makeText(SettingsActivity.this, "卸载失败", Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     /** 弹出输入框让用户输入包名，从缓存的索引中查找后调用安装 */
