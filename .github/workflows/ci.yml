@@ -60,15 +60,18 @@ jobs:
           retention-days: 30
 
   # -----------------------------------------------------------
-  # Release：打 tag 时上传 tar.gz + packages.json 到 GitHub Releases
-  # App 侧 PackageManager 通过 packages.json 发现并下载包
+  # Release：打 tag 时上传 tar.gz + packages.json 到【公开发布仓库】的 Releases
+  #
+  # 软件开发 CI 在私有仓库 XION-HN/androlinux 跑；但 release 资产必须放公开仓库
+  # XION-HN/androlinux-repo，App 端无 token 才能拉到 packages.json 和 tar.gz。
+  # 故 release job 跨仓库上传：用 PAT（存为 secret RELEASE_REPO_TOKEN）
+  # 在公开仓库创建 release 并上传资产。
+  # App 侧 PackageManager 通过 releases/latest/download/packages.json 发现并下载包。
   # -----------------------------------------------------------
   release:
     needs: bootstrap
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -78,9 +81,13 @@ jobs:
           name: bootstrap-prod
           path: /tmp/bootstrap-prod
 
-      - name: Upload to GitHub Releases
+      - name: Upload to public release repo (cross-repo)
         uses: softprops/action-gh-release@v2
         with:
+          # 目标公开发布仓库（owner/repo），与开发仓库分离
+          repository: XION-HN/androlinux-repo
+          # 跨仓库操作需要 PAT，默认 GITHUB_TOKEN 只能操作当前私有仓库
+          token: ${{ secrets.RELEASE_REPO_TOKEN }}
           tag_name: ${{ github.ref_name }}
           files: |
             /tmp/bootstrap-prod/packages.json
