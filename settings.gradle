@@ -12,7 +12,7 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "androlinux"
+rootProject.name = "haisa-des"
 include ':app'
 include ':terminal-view'
 include ':terminal-emulator'

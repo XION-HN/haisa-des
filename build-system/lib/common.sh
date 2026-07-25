@@ -1,4 +1,4 @@
-# AndroLinux 构建公共函数库（由 build.sh source）
+# HaisaDes 构建公共函数库（由 build.sh source）
 
 log()  { printf '\033[1;34m[build]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }

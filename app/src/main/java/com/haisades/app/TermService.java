@@ -1,4 +1,4 @@
-package com.androlinux.app;
+package com.haisades;
 
 import android.app.Notification;
 import android.app.NotificationManager;
@@ -21,7 +21,7 @@ public class TermService extends Service {
     public void onCreate() {
         super.onCreate();
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "androlinux:session");
+        mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "haisa-des:session");
         mWakeLock.setReferenceCounted(false);
     }
 

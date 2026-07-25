@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AndroLinux 构建系统入口
+# HaisaDes 构建系统入口
 # 用法:
 #   ./build.sh list                列出全部包及依赖
 #   ./build.sh build <包...|all>   构建（含依赖），产物进 staging

@@ -1,4 +1,4 @@
-package com.androlinux.app;
+package com.haisades;
 
 import android.app.Application;
 import android.app.NotificationChannel;
@@ -10,8 +10,8 @@ public class App extends Application {
     public static final String CHANNEL_SESSION = "session";
 
     /** Linux 环境前缀（编译期写死于所有二进制中，必须与 build-system/config.sh 一致） */
-    public static final String PREFIX = "/data/data/com.androlinux.app/files/usr";
-    public static final String HOME_PATH = "/data/data/com.androlinux.app/files/home";
+    public static final String PREFIX = "/data/data/com.haisades/files/usr";
+    public static final String HOME_PATH = "/data/data/com.haisades/files/home";
     public static final String BOOTSTRAP_ASSET = "bootstrap/bootstrap-arm64-v8a.zip";
 
     @Override

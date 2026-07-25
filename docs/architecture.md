@@ -1,6 +1,6 @@
 # 架构总览
 
-本文档描述 AndroLinux 当前（Phase 1 技术验证完成）的整体架构，供后续维护参考。
+本文档描述 HaisaDes 当前（Phase 1 技术验证完成）的整体架构，供后续维护参考。
 
 ## 三层架构
 
@@ -39,7 +39,7 @@ build-system/
 
 ### 变体
 
-- **prod**：`PREFIX=/data/data/com.androlinux.app/files/usr`（打进 APK，正式分发）
+- **prod**：`PREFIX=/data/data/com.haisades/files/usr`（打进 APK，正式分发）
 - **test**：`PREFIX=/data/data/com.termux/files/home/al-test`（借 Termux 环境真机冒烟）
 
 ### NEEDED 校验
@@ -82,7 +82,7 @@ CI 阶段用 `readelf -d` 扫描 .so 的 NEEDED 依赖，确保设备上 dlopen 
 ### 崩溃日志
 
 `CrashHandler` 捕获未处理异常，写入：
-`Android/data/com.androlinux.app/files/logs/crash-<timestamp>.txt`
+`Android/data/com.haisades/files/logs/crash-<timestamp>.txt`
 含设备信息 + 完整堆栈，便于问题排查。
 
 ## CI
@@ -112,4 +112,4 @@ vendored 自 termux-app @ `3df69d1`（Apache 2.0）：
 | compileSdk | 36 | 最新 API |
 | ABI | arm64-v8a | demo 仅支持 64 位 ARM |
 | NDK | r29 | 16KB 页对齐支持 |
-| PREFIX | `/data/data/com.androlinux.app/files/usr` | 编译期写死，与 build-system/config.sh 一致 |
+| PREFIX | `/data/data/com.haisades/files/usr` | 编译期写死，与 build-system/config.sh 一致 |

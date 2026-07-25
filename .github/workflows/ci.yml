@@ -63,7 +63,7 @@ jobs:
   # 通知公开发布仓库跑"资源 CI"
   #
   # 软件开发 CI（bootstrap + apk）只在私有仓库跑，不碰 release 资产。
-  # 打 tag 时，这里向公开仓库 XION-HN/androlinux-repo 发 repository_dispatch 事件，
+  # 打 tag 时，这里向公开仓库 XION-HN/haisa-des-repo 发 repository_dispatch 事件，
   # 把本次 run_id 和 tag 传过去；公开仓库 CI 收到后用 PAT 反向下载本仓库的
   # bootstrap-prod artifact，再上传到它自己的 GitHub Releases。
   # 这样：私有仓库专注软件构建，公开仓库专注 release 资产托管，职责分离。
@@ -80,7 +80,7 @@ jobs:
           curl -sS -X POST \
             -H "Authorization: token $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/XION-HN/androlinux-repo/dispatches \
+            https://api.github.com/repos/XION-HN/haisa-des-repo/dispatches \
             -d "{
               \"event_type\": \"publish-release\",
               \"client_payload\": {
@@ -89,7 +89,7 @@ jobs:
                 \"source_run_id\": \"${{ github.run_id }}\"
               }
             }"
-          echo "已通知 androlinux-repo 跑资源 CI（tag=${{ github.ref_name }}, run_id=${{ github.run_id }}）"
+          echo "已通知 haisa-des-repo 跑资源 CI（tag=${{ github.ref_name }}, run_id=${{ github.run_id }}）"
 
   # -----------------------------------------------------------
   # APK：注入 prod bootstrap 资产 → assembleDebug（侧载分发）
@@ -133,6 +133,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: androlinux-apk
+          name: haisa-des-apk
           path: app/build/outputs/apk/**/*.apk
           retention-days: 30

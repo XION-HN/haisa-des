@@ -1,4 +1,4 @@
-# AndroLinux（工作名称）
+# HaisaDes（工作名称）
 
 在 Android 上运行原生 Linux 工具链 —— 内部技术验证项目。
 
@@ -9,7 +9,7 @@
 - **交叉编译系统**：NDK r29 构建 14 个包，含 bash/curl/python 3.13/pip，CI 一键产出
 - **终端 App**：Termux 式终端（PTY + 终端渲染），支持复制粘贴、缩放
 - **诊断自检**：一键全量自检（exec + Python + pip），结构化报告
-- **崩溃日志**：全局崩溃捕获，写入 `Android/data/com.androlinux.app/files/logs/`
+- **崩溃日志**：全局崩溃捕获，写入 `Android/data/com.haisades/files/logs/`
 - **CI 全链路**：bootstrap（prod/test 双变体）→ APK，全绿可复现
 
 ## 仓库结构
@@ -28,7 +28,7 @@
 - **bootstrap**：`.github/workflows/ci.yml` 的 `bootstrap` job
   （`sdkmanager "ndk;29.0.14206865"` → `build-system/build.sh build all` → `make-bootstrap.sh`）
 - **APK**：`apk` job 注入 `bootstrap-arm64-v8a.zip` 资产后 `assembleDebug`
-- 产物在 Actions 页面的 Artifacts：`bootstrap-prod` / `bootstrap-test` / `androlinux-apk`
+- 产物在 Actions 页面的 Artifacts：`bootstrap-prod` / `bootstrap-test` / `haisa-des-apk`
 
 本地手动构建 bootstrap（x86_64 Linux 主机，需 NDK r29）：
 

@@ -1,11 +1,11 @@
 plugins { id 'com.android.application' }
 
 android {
-    namespace 'com.androlinux.app'
+    namespace 'com.haisades'
     compileSdk 36
 
     defaultConfig {
-        applicationId 'com.androlinux.app'
+        applicationId 'com.haisades'
         // minSdk 28: demo 设备矩阵为 Android 12+，与构建系统 API_LEVEL 对齐
         minSdk 28
         // targetSdk 28: Bionic 路线的生死线——Android 10+ 禁止从私有目录 exec

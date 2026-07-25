@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 查询 androlinux 私有仓库的 GitHub Actions 状态
+# 查询 haisa-des 私有仓库的 GitHub Actions 状态
 #
 # 用法:
 #   ./scripts/ci-status.sh                # 列出最近 5 次 run 概要
@@ -15,7 +15,7 @@
 # 无 token 时脚本会给出明确提示并退出，不会盲目撞 API 限流。
 set -euo pipefail
 
-REPO="XION-HN/androlinux"
+REPO="XION-HN/haisa-des"
 
 # 统一 token 入口（GH_TOKEN 优先，与 gh CLI 一致）
 if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then

@@ -1,10 +1,10 @@
-# AndroLinux 构建系统全局配置
+# HaisaDes 构建系统全局配置
 # 本文件由 build.sh source，禁止直接执行。
 
 # ---- 变体（prod / test）----
 # prod: 打进 APK 的正式 prefix；test: 借 Termux 环境做真机冒烟的 prefix
 VARIANT="${VARIANT:-prod}"
-APP_ID="com.androlinux.app"
+APP_ID="com.haisades"
 if [ "$VARIANT" = "test" ]; then
     PREFIX="/data/data/com.termux/files/home/al-test"
 else

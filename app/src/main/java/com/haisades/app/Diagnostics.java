@@ -1,4 +1,4 @@
-package com.androlinux.app;
+package com.haisades;
 
 import android.content.Context;
 import android.os.Build;
@@ -68,7 +68,7 @@ public final class Diagnostics {
         StringBuilder sb = new StringBuilder();
         String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
 
-        sb.append("=== AndroLinux 全量自检报告 ===\n");
+        sb.append("=== HaisaDes 全量自检报告 ===\n");
         sb.append("生成时间: ").append(ts).append("\n\n");
         sb.append(collectBasic(ctx)).append('\n');
 

@@ -21,7 +21,7 @@ gh auth login
 ./scripts/ci-status.sh <run-id>
 
 # 下载 APK artifact 到 ./dist/
-gh run download <run-id> --repo XION-HN/androlinux --name androlinux-apk -D ./dist/
+gh run download <run-id> --repo XION-HN/haisa-des --name haisa-des-apk -D ./dist/
 ```
 
 ## 设备侧一键全量自检

@@ -1,4 +1,4 @@
-package com.androlinux.app;
+package com.haisades;
 
 import android.app.Activity;
 import android.content.ClipData;

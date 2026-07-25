@@ -1,4 +1,4 @@
-package com.androlinux.app;
+package com.haisades;
 
 import android.content.Context;
 import android.os.Handler;
@@ -48,10 +48,10 @@ public final class PackageManager {
     private static final String TAG = "PackageManager";
 
     /** 包发布仓库（必须 public，App 端无 token 访问）。
-     *  开发仓库 XION-HN/androlinux 是 private，不能直接给 App 用；
-     *  发布资产统一推到公开仓库 XION-HN/androlinux-repo 的 Releases。 */
+     *  开发仓库 XION-HN/haisa-des 是 private，不能直接给 App 用；
+     *  发布资产统一推到公开仓库 XION-HN/haisa-des-repo 的 Releases。 */
     private static final String RELEASE_REPO_OWNER = "XION-HN";
-    private static final String RELEASE_REPO_NAME  = "androlinux-repo";
+    private static final String RELEASE_REPO_NAME  = "haisa-des-repo";
 
     /** packages.json 的下载 URL。
      *  用 GitHub Releases 的 latest/download/ 固定路径，自动 302 重定向到最新 release
@@ -143,7 +143,7 @@ public final class PackageManager {
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(30000);
-        conn.setRequestProperty("User-Agent", "AndroLinux-PackageManager");
+        conn.setRequestProperty("User-Agent", "HaisaDes-PackageManager");
         try {
             if (conn.getResponseCode() != 200) {
                 throw new RuntimeException("HTTP " + conn.getResponseCode() + " 取索引失败: " + INDEX_URL);

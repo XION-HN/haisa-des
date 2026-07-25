@@ -1,4 +1,4 @@
-# build-system —— AndroLinux 交叉编译系统
+# build-system —— HaisaDes 交叉编译系统
 
 按 Buildroot 风格自研：每包一个 `packages/<name>/build.sh`（元数据 + `pkg_build()`），
 公共函数在 `lib/common.sh`，工具链在 `toolchains/`。**不复制 termux-packages 的任何脚本/补丁（GPLv3 避让）**。
@@ -15,7 +15,7 @@ export ANDROID_NDK_HOME=/path/to/ndk/29.0.14206865   # 权威工具链（CI 路�
 
 环境变量：`TOOLCHAIN=ndk|termux-local`（默认 ndk）、`VARIANT=prod|test`（默认 prod）、`JOBS=N`
 
-- **prod**：`PREFIX=/data/data/com.androlinux.app/files/usr`（打进 APK）
+- **prod**：`PREFIX=/data/data/com.haisades/files/usr`（打进 APK）
 - **test**：`PREFIX=/data/data/com.termux/files/home/al-test`（借 Termux 环境做真机冒烟，产物不可发布）
 - **termux-local**：在 Android 设备上的 Termux 里用 clang 冒烟构建（仅验证用）
 

@@ -1,4 +1,4 @@
-package com.androlinux.app;
+package com.haisades;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -71,7 +71,7 @@ public class SettingsActivity extends Activity {
                         String p = f.getAbsolutePath();
                         Toast.makeText(this, "已导出:\n" + p, Toast.LENGTH_LONG).show();
                         mExecOutput.setText("已导出诊断日志:\n" + p
-                            + "\n\n用文件管理器进 Android/data/com.androlinux.app/files/logs/ 取回。");
+                            + "\n\n用文件管理器进 Android/data/com.haisades/files/logs/ 取回。");
                         mDiagLog.append("--- 导出诊断日志 ---\n").append(p).append("\n\n");
                     } else {
                         Toast.makeText(this, "导出失败", Toast.LENGTH_LONG).show();

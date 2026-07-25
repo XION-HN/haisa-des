@@ -9,7 +9,7 @@
 #
 # 用法:
 #   ./make-packages-index.sh
-#   REPO_URL="https://github.com/XION-HN/androlinux-repo" \
+#   REPO_URL="https://github.com/XION-HN/haisa-des-repo" \
 #     RELEASE_TAG="v1.0.0" ./make-packages-index.sh
 set -euo pipefail
 
@@ -23,7 +23,7 @@ source "$BS_ROOT/lib/common.sh"
 # 注意：GitHub 的 "latest" 别名只在 API 层生效，下载 URL 路径必须是真实 tag 名，
 # 用 "latest" 作 RELEASE_TAG 会导致 download_url 全部 404。CI 必须传真实 tag。
 # 仓库必须 public，否则 App 端无 token 拉不到索引和资产。
-REPO_URL="${REPO_URL:-https://github.com/XION-HN/androlinux-repo}"
+REPO_URL="${REPO_URL:-https://github.com/XION-HN/haisa-des-repo}"
 RELEASE_TAG="${RELEASE_TAG:?RELEASE_TAG 未设置（CI 必须传真实 tag 名，如 v0.1.0）}"
 
 PKG_DIR="$DIST_DIR/packages"
@@ -71,7 +71,7 @@ release_tag = sys.argv[4]
 target_abi = sys.argv[5]
 pkg_stage_root = sys.argv[6]
 bs_root = sys.argv[7]
-prefix = "/data/data/com.androlinux.app/files/usr"
+prefix = "/data/data/com.haisades/files/usr"
 
 def get_deps(name):
     """从 build.sh 的 pkg_deps 函数提取依赖列表"""
@@ -151,7 +151,7 @@ for fn in sorted(os.listdir(pkg_dir)):
     deps = get_deps(name)
     symlinks = get_symlinks(name)
 
-    # REPO_URL 统一为仓库根（如 https://github.com/XION-HN/androlinux-repo），
+    # REPO_URL 统一为仓库根（如 https://github.com/XION-HN/haisa-des-repo），
     # 拼出标准 release 资产下载 URL。
     # 若误传了带 /releases 的 URL，也做一次容错剥离，避免 releases/releases 重复。
     base = repo_url.rstrip("/")

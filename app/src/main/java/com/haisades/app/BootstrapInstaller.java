@@ -1,4 +1,4 @@
-package com.androlinux.app;
+package com.haisades;
 
 import android.content.Context;
 import android.os.Handler;
@@ -110,7 +110,7 @@ public final class BootstrapInstaller {
             File bashrc = new File(home, ".bashrc");
             if (!bashrc.exists()) {
                 try (FileOutputStream fos = new FileOutputStream(bashrc)) {
-                    fos.write(("export PS1='[\\u@androlinux \\w]\\$ '\n"
+                    fos.write(("export PS1='[\\u@haisa-des \\w]\\$ '\n"
                              + "alias ll='ls -l'\n"
                              + "export TERM=xterm-256color\n").getBytes());
                 }

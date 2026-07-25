@@ -1,4 +1,4 @@
-package com.androlinux.app;
+package com.haisades;
 
 import android.content.Context;
 import android.content.pm.PackageInfo;
@@ -18,8 +18,8 @@ import java.util.Locale;
 
 /**
  * 全局崩溃捕获：未捕获异常发生时，把完整堆栈 + 设备信息 + bootstrap 状态 + logcat
- * 写到 Android/data/com.androlinux.app/files/crash/（应用私有外部目录，免存储权限，
- * 用户可用文件管理器直接进 Android/data/com.androlinux.app/ 取回）。
+ * 写到 Android/data/com.haisades/files/crash/（应用私有外部目录，免存储权限，
+ * 用户可用文件管理器直接进 Android/data/com.haisades/ 取回）。
  *
  * 同时把 logcat 单独存一份到 logs/，并在 SettingsActivity 提供“导出诊断日志”按钮
  * 供非崩溃场景主动导出。
@@ -50,7 +50,7 @@ public class CrashHandler implements Thread.UncaughtExceptionHandler {
         File f = new File(crashDir, "crash_" + ts + ".log");
 
         try (PrintWriter pw = new PrintWriter(new FileWriter(f))) {
-            pw.println("===== AndroLinux 崩溃报告 =====");
+            pw.println("===== HaisaDes 崩溃报告 =====");
             pw.println("时间: " + new Date());
             pw.println();
 
@@ -123,7 +123,7 @@ public class CrashHandler implements Thread.UncaughtExceptionHandler {
         String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
         File f = new File(dir, "diag_" + ts + ".log");
         try (PrintWriter pw = new PrintWriter(new FileWriter(f))) {
-            pw.println("===== AndroLinux 诊断日志 =====");
+            pw.println("===== HaisaDes 诊断日志 =====");
             pw.println("时间: " + new Date());
             pw.println();
             pw.println(Diagnostics.collectBasic(ctx));

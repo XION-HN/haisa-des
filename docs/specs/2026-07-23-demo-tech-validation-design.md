@@ -1,8 +1,8 @@
-# AndroLinux Demo（内部技术验证版）设计文档
+# HaisaDes Demo（内部技术验证版）设计文档
 
 - 日期：2026-07-23
 - 状态：已与需求方确认（方案 A：最小闭环验证）
-- 项目代号：AndroLinux（工作名称，applicationId `com.androlinux.app`）
+- 项目代号：HaisaDes（工作名称，applicationId `com.haisades`）
 
 ## 1. 目标与定位
 
@@ -46,7 +46,7 @@
 
 ### 4.1 prefix 与变体
 
-- prod：`/data/data/com.androlinux.app/files/usr`
+- prod：`/data/data/com.haisades/files/usr`
 - test：`/data/data/com.termux/files/home/al-test`（借 Termux 的可执行环境做真机冒烟，验证二进制本身）
 - 编译期 `--prefix` + `-Wl,-rpath,$PREFIX/lib` 写死；**运行期不依赖 LD_LIBRARY_PATH**。
 - 所有原生构建显式 `-Wl,-z,max-page-size=16384`（16KB 页对齐，从第一天合规）。
