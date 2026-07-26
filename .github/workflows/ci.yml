@@ -58,6 +58,7 @@ jobs:
           ./make-bootstrap-version.sh
 
       - name: Upload bootstrap artifacts
+        continue-on-error: true   # 配额耗尽时不阻塞 CI（代码已验证）
         uses: actions/upload-artifact@v4
         with:
           name: bootstrap-${{ matrix.variant }}
@@ -141,6 +142,7 @@ jobs:
         run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
       - name: Upload APK
+        continue-on-error: true   # 同 bootstrap，配额耗尽时不阻塞 CI
         uses: actions/upload-artifact@v4
         with:
           name: haisa-des-apk
