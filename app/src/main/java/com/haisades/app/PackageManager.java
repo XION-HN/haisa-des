@@ -1,6 +1,7 @@
 package com.haisades;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.system.Os;
@@ -49,23 +50,173 @@ public final class PackageManager {
 
     /** 包发布仓库（必须 public，App 端无 token 访问）。
      *  开发仓库 XION-HN/haisa-des 是 private，不能直接给 App 用；
-     *  发布资产统一推到公开仓库 XION-HN/haisa-des-repo 的 Releases。 */
-    private static final String RELEASE_REPO_OWNER = "XION-HN";
-    private static final String RELEASE_REPO_NAME  = "haisa-des-repo";
+     *  发布资产统一推到公开仓库 XION-HN/haisa-des-repo 的 Releases。
+     *  包级可见：BootstrapUpdater 拼 version.json URL 时复用。 */
+    static final String RELEASE_REPO_OWNER = "XION-HN";
+    static final String RELEASE_REPO_NAME  = "haisa-des-repo";
 
-    /** packages.json 的下载 URL。
-     *  用 GitHub Releases 的 latest/download/ 固定路径，自动 302 重定向到最新 release
-     *  的 packages.json。相比调 GitHub API 查 tag 再拼 URL 的方案，此路径：
-     *    - 无需 token（公开仓库资产下载通道）
-     *    - 无 API 速率限制（未认证 API 仅 60 次/小时，多设备共享 IP 易耗尽）
-     *    - 自动跟随最新 release，发新版无需改代码
-     *  每个包的 tar.gz 下载 URL 由 packages.json 内的 download_url 字段提供，
-     *  其中已含真实 tag 名，保证 sha256 校验与索引一致。 */
-    private static final String INDEX_URL =
-        "https://github.com/" + RELEASE_REPO_OWNER + "/" + RELEASE_REPO_NAME + "/releases/latest/download/packages.json";
+    /** GitHub 直连基准 URL（所有镜像都是对它的代理/前缀包装） */
+    private static final String GITHUB_BASE =
+        "https://github.com/" + RELEASE_REPO_OWNER + "/" + RELEASE_REPO_NAME;
 
-    /** 已安装包记录目录：$PREFIX/var/installed/<name> 内容为版本号 */
+    /** 预置镜像列表。
+     *  每个镜像 = 标签 + URL 前缀。
+     *  applyMirror() 把 https://github.com/.../releases/download/.../file
+     *  改写为 <prefix>https://github.com/.../releases/download/.../file
+     *  （前缀式代理，如 ghproxy.com / gh-proxy.com）。
+     *  index=0 为默认（直连，prefix=""）。 */
+    public static final String[][] MIRRORS = {
+        // {label, prefix}
+        {"默认（GitHub 直连）", ""},
+        {"ghproxy.com",         "https://ghproxy.com/"},
+        {"gh-proxy.com",        "https://gh-proxy.com/"},
+    };
+    private static final int DEFAULT_MIRROR_INDEX = 0;
+
+    private static final String SP_NAME  = "pkg_prefs";
+    private static final String SP_MIRROR = "mirror_index";
+
+    /** 当前生效的镜像索引（SharedPreferences 持久化） */
+    public static int getMirrorIndex(Context ctx) {
+        return ctx.getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)
+                 .getInt(SP_MIRROR, DEFAULT_MIRROR_INDEX);
+    }
+
+    public static void setMirrorIndex(Context ctx, int index) {
+        if (index < 0 || index >= MIRRORS.length) index = DEFAULT_MIRROR_INDEX;
+        ctx.getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)
+           .edit().putInt(SP_MIRROR, index).apply();
+    }
+
+    public static String getMirrorLabel(int index) {
+        if (index < 0 || index >= MIRRORS.length) return MIRRORS[DEFAULT_MIRROR_INDEX][0];
+        return MIRRORS[index][0];
+    }
+
+    /** 用指定镜像索引重写 URL（不读 SP，用于重试时环形切换镜像） */
+    static String applyMirrorWithIndex(int idx, String url) {
+        if (idx < 0 || idx >= MIRRORS.length) idx = DEFAULT_MIRROR_INDEX;
+        String prefix = MIRRORS[idx][1];
+        if (prefix == null || prefix.isEmpty()) return url;
+        if (!url.startsWith("https://github.com/")) return url;
+        return prefix + url;
+    }
+
+    // ------------------------------------------------------------------
+    // 网络健壮性：指数退避 + 镜像环形切换
+    //
+    // 设计：单次请求失败不直接抛异常，先重试 2 次（间隔 1s/2s）；
+    // 仍失败则切换到下一个镜像（环形遍历 MIRRORS），再重试 2 次；
+    // 所有镜像都失败才真正抛异常。
+    // 不写回 SP：保留用户首选镜像，下次会话仍从首选开始。
+    // ------------------------------------------------------------------
+
+    /** 单次 HTTP GET 取字符串。 */
+    private static String httpGetString(String url, int timeoutMs) throws Exception {
+        URL u = new URL(url);
+        HttpURLConnection conn = (HttpURLConnection) u.openConnection();
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(timeoutMs);
+        conn.setRequestProperty("User-Agent", "HaisaDes-PackageManager");
+        try {
+            int code = conn.getResponseCode();
+            if (code != 200) throw new RuntimeException("HTTP " + code + " : " + url);
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                String line;
+                while ((line = r.readLine()) != null) sb.append(line).append('\n');
+            }
+            return sb.toString();
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    /** 索引专用：环形遍历镜像 + 指数退避重试，返回响应字符串。
+     *  从用户首选镜像开始，每个镜像重试 MAX_RETRIES_PER_MIRROR 次，
+     *  间隔 BACKOFF_BASE_MS * 2^attempt。所有镜像都失败才抛异常。 */
+    static String httpGetJsonWithRetry(Context ctx, String originalUrl) throws Exception {
+        final int userMirror = getMirrorIndex(ctx);
+        final int n = MIRRORS.length;
+        Exception lastErr = null;
+        for (int offset = 0; offset < n; offset++) {
+            int m = (userMirror + offset) % n;
+            String url = applyMirrorWithIndex(m, originalUrl);
+            for (int attempt = 0; attempt < MAX_RETRIES_PER_MIRROR; attempt++) {
+                try {
+                    return httpGetString(url, 30000);
+                } catch (Exception e) {
+                    lastErr = e;
+                    Log.w(TAG, "GET " + url + " 失败(尝试 " + (attempt + 1)
+                        + "/" + MAX_RETRIES_PER_MIRROR + ", 镜像=" + MIRRORS[m][0] + "): " + e.getMessage());
+                    if (attempt < MAX_RETRIES_PER_MIRROR - 1) {
+                        Thread.sleep(BACKOFF_BASE_MS * (1L << attempt)); // 1s, 2s
+                    }
+                }
+            }
+        }
+        throw new RuntimeException("所有镜像均失败: " + lastErr.getMessage(), lastErr);
+    }
+
+    /** 包下载专用：环形遍历镜像 + 指数退避重试。
+     *  内部调 downloadTo（含断点续传），失败切镜像重试。
+     *  断点续传的 dest 已有部分内容，切镜像后新镜像若支持 Range 可续传，
+     *  不支持则 downloadTo 内部回退整文件覆盖（仍正确，只是浪费流量）。 */
+    static void downloadFileWithRetry(Context ctx, String originalUrl, File dest,
+                                      DownloadProgress progress) throws Exception {
+        final int userMirror = getMirrorIndex(ctx);
+        final int n = MIRRORS.length;
+        Exception lastErr = null;
+        for (int offset = 0; offset < n; offset++) {
+            int m = (userMirror + offset) % n;
+            String url = applyMirrorWithIndex(m, originalUrl);
+            for (int attempt = 0; attempt < MAX_RETRIES_PER_MIRROR; attempt++) {
+                try {
+                    downloadTo(url, dest, progress);
+                    return;   // 成功
+                } catch (Exception e) {
+                    lastErr = e;
+                    Log.w(TAG, "下载 " + url + " 失败(尝试 " + (attempt + 1)
+                        + "/" + MAX_RETRIES_PER_MIRROR + ", 镜像=" + MIRRORS[m][0] + "): " + e.getMessage());
+                    if (attempt < MAX_RETRIES_PER_MIRROR - 1) {
+                        Thread.sleep(BACKOFF_BASE_MS * (1L << attempt));
+                    }
+                }
+            }
+        }
+        throw new RuntimeException("所有镜像均失败: " + lastErr.getMessage(), lastErr);
+    }
+
+    private static final int MAX_RETRIES_PER_MIRROR = 2;
+    private static final long BACKOFF_BASE_MS = 1000L;
+
+    /** 已安装包记录目录：$PREFIX/var/installed/<name> 内容为版本号；
+     *  <name>.hold 标记文件存在 = 该包被锁定（不参与 upgradeAll）；
+     *  <name>.files 文件清单（卸载时按引用计数删除） */
     private static final String INSTALLED_DIR = App.PREFIX + "/var/installed";
+
+    // ---- 版本锁定（hold）----
+    // 语义：被 hold 的包不参与 upgradeAll（防意外升级破坏兼容性）。
+    // 显式安装/升级某包时仍允许（用户意图优先），仅在列表中标 [HOLD] 提醒。
+    public static boolean isHeld(String name) {
+        return new File(INSTALLED_DIR, name + ".hold").exists();
+    }
+
+    public static void setHeld(String name, boolean held) {
+        File f = new File(INSTALLED_DIR, name + ".hold");
+        if (held) {
+            try {
+                new File(INSTALLED_DIR).mkdirs();
+                try (FileOutputStream fos = new FileOutputStream(f)) {
+                    fos.write("1\n".getBytes());
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "setHeld true failed: " + name + " " + e);
+            }
+        } else {
+            f.delete();
+        }
+    }
 
     /** 下载缓存目录 */
     private static final String CACHE_DIR = App.PREFIX + "/var/cache/pkg";
@@ -121,10 +272,10 @@ public final class PackageManager {
     }
 
     /** 异步拉取索引。callback 在主线程回调。 */
-    public static void fetchIndex(Callback cb) {
+    public static void fetchIndex(Context ctx, Callback cb) {
         new Thread(() -> {
             try {
-                List<PackageInfo> pkgs = fetchIndexSync();
+                List<PackageInfo> pkgs = fetchIndexSync(ctx);
                 Handler h = new Handler(Looper.getMainLooper());
                 h.post(() -> cb.onSuccess(formatIndexSummary(pkgs)));
             } catch (Exception e) {
@@ -136,40 +287,25 @@ public final class PackageManager {
     }
 
     /** 同步拉取并解析索引。
-     *  直接用 INDEX_URL（latest/download/ 固定路径），HttpURLConnection 默认
-     *  followRedirects=true，会自动跟随 GitHub 的 302 到真实资产 URL。 */
-    static List<PackageInfo> fetchIndexSync() throws Exception {
-        URL url = new URL(INDEX_URL);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setConnectTimeout(15000);
-        conn.setReadTimeout(30000);
-        conn.setRequestProperty("User-Agent", "HaisaDes-PackageManager");
-        try {
-            if (conn.getResponseCode() != 200) {
-                throw new RuntimeException("HTTP " + conn.getResponseCode() + " 取索引失败: " + INDEX_URL);
-            }
-            StringBuilder sb = new StringBuilder();
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
-                String line;
-                while ((line = r.readLine()) != null) sb.append(line).append('\n');
-            }
-            JSONObject root = new JSONObject(sb.toString());
-            JSONArray arr = root.getJSONArray("packages");
-            List<PackageInfo> pkgs = new ArrayList<>();
-            for (int i = 0; i < arr.length(); i++) {
-                pkgs.add(new PackageInfo(arr.getJSONObject(i)));
-            }
-            return pkgs;
-        } finally {
-            conn.disconnect();
+     *  用 httpGetJsonWithRetry 做镜像环形切换 + 指数退避重试。
+     * 传入的 URL 是 GitHub 直连基准（不带镜像前缀），由重试层按镜像重写。 */
+    static List<PackageInfo> fetchIndexSync(Context ctx) throws Exception {
+        String raw = GITHUB_BASE + "/releases/latest/download/packages.json";
+        String body = httpGetJsonWithRetry(ctx, raw);
+        JSONObject root = new JSONObject(body);
+        JSONArray arr = root.getJSONArray("packages");
+        List<PackageInfo> pkgs = new ArrayList<>();
+        for (int i = 0; i < arr.length(); i++) {
+            pkgs.add(new PackageInfo(arr.getJSONObject(i)));
         }
+        return pkgs;
     }
 
     /** 异步安装包（含依赖）。callback 在主线程回调。下载进度通过 onProgress 透传（百分比文字）。 */
     public static void installPackage(Context ctx, PackageInfo pkg, Callback cb) {
         new Thread(() -> {
             try {
-                List<PackageInfo> index = fetchIndexSync();
+                List<PackageInfo> index = fetchIndexSync(ctx);
                 // 拓扑展开依赖
                 List<PackageInfo> order = resolveDeps(pkg.name, index);
                 StringBuilder log = new StringBuilder();
@@ -188,7 +324,8 @@ public final class PackageManager {
                         }
                         h.post(() -> cb.onProgress(msg));
                     };
-                    String result = installOneSync(p, dp);
+                    // installOneSync 内部 downloadFileWithRetry 会按当前镜像重写 + 重试 + 切换
+                    String result = installOneSync(ctx, p, dp);
                     log.append(result).append('\n');
                 }
                 String summary = log.toString().trim();
@@ -253,8 +390,9 @@ public final class PackageManager {
         // 清理可能变空的父目录（不递归删非空目录）
         cleanupEmptyDirs(files);
 
-        // 删除文件清单和版本标记
+        // 删除文件清单、版本标记、hold 锁定标记
         new File(INSTALLED_DIR, pkgName + ".files").delete();
+        new File(INSTALLED_DIR, pkgName + ".hold").delete();
         new File(INSTALLED_DIR, pkgName).delete();
 
         return pkgName + "-" + ver + " 已卸载（删除 " + deleted + " 个文件，跳过 " + skipped + " 个共享文件）";
@@ -340,13 +478,10 @@ public final class PackageManager {
         order.add(p);
     }
 
-    /** 安装单个包：下载 → 校验 → （升级时清理旧版残留）→ 解压 → 重建符号链接 → 记录文件清单 → 记录已安装 */
-    static String installOneSync(PackageInfo pkg) throws Exception {
-        return installOneSync(pkg, null);
-    }
-
-    /** 安装单个包（可带下载进度回调）：下载 → 校验 → （升级时清理旧版残留）→ 解压 → 重建符号链接 → 记录文件清单 → 记录已安装 */
-    static String installOneSync(PackageInfo pkg, DownloadProgress progress) throws Exception {
+    /** 安装单个包（可带下载进度回调）：下载 → 校验 → （升级时清理旧版残留）→ 解压 → 重建符号链接 → 记录文件清单 → 记录已安装。
+     *  ctx != null 时下载走 downloadFileWithRetry（镜像环形切换 + 指数退避）；
+     *  ctx == null 时回退到 downloadTo 单次直连（用于无 Context 的旧调用路径）。 */
+    static String installOneSync(Context ctx, PackageInfo pkg, DownloadProgress progress) throws Exception {
         // 已安装相同版本则跳过
         String installedVer = getInstalledVersion(pkg.name);
         if (pkg.version.equals(installedVer)) {
@@ -361,7 +496,11 @@ public final class PackageManager {
 
         // 下载（如缓存命中且 sha256 匹配则跳过下载）
         if (!tarball.exists() || !sha256Matches(tarball, pkg.sha256)) {
-            downloadTo(pkg.downloadUrl, tarball, progress);
+            if (ctx != null) {
+                downloadFileWithRetry(ctx, pkg.downloadUrl, tarball, progress);
+            } else {
+                downloadTo(pkg.downloadUrl, tarball, progress);
+            }
         }
         // 下载后再次校验
         if (!sha256Matches(tarball, pkg.sha256)) {

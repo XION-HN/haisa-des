@@ -102,13 +102,13 @@ public class SettingsActivity extends Activity {
         Button btnRefreshIndex = findViewById(R.id.btn_refresh_index);
         btnRefreshIndex.setOnClickListener(v -> {
             mPkgOutput.setVisibility(View.VISIBLE);
-            mPkgOutput.setText("拉取索引中…");
-            PackageManager.fetchIndex(new PackageManager.Callback() {
+            mPkgOutput.setText("拉取索引中…（镜像: " + PackageManager.getMirrorLabel(PackageManager.getMirrorIndex(this)) + "）");
+            PackageManager.fetchIndex(this, new PackageManager.Callback() {
                 @Override public void onProgress(String msg) { }
                 @Override public void onSuccess(String summary) {
                     mPkgOutput.setText(summary);
                     try {
-                        indexHolder[0] = PackageManager.fetchIndexSync();
+                        indexHolder[0] = PackageManager.fetchIndexSync(SettingsActivity.this);
                     } catch (Exception e) {
                         indexHolder[0] = null;
                     }
@@ -119,6 +119,9 @@ public class SettingsActivity extends Activity {
             });
         });
 
+        Button btnSelectMirror = findViewById(R.id.btn_select_mirror);
+        btnSelectMirror.setOnClickListener(v -> showMirrorDialog());
+
         Button btnOpenPkgList = findViewById(R.id.btn_open_pkg_list);
         btnOpenPkgList.setOnClickListener(v -> startActivity(new Intent(this, PackageListActivity.class)));
 
@@ -127,6 +130,9 @@ public class SettingsActivity extends Activity {
 
         Button btnUninstallPkg = findViewById(R.id.btn_uninstall_pkg);
         btnUninstallPkg.setOnClickListener(v -> showUninstallDialog());
+
+        Button btnCheckBootstrap = findViewById(R.id.btn_check_bootstrap_update);
+        btnCheckBootstrap.setOnClickListener(v -> checkBootstrapUpdate());
     }
 
     /** 弹出输入框让用户输入包名，调用卸载（不需要索引，直接按已装记录卸载） */
@@ -237,5 +243,87 @@ public class SettingsActivity extends Activity {
         ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         cm.setPrimaryClip(ClipData.newPlainText(label, text));
         Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show();
+    }
+
+    /** 镜像源选择对话框：单选，选中后立即持久化。
+     *  下次拉索引/下载包即生效（无需重启 Activity）。 */
+    private void showMirrorDialog() {
+        final int current = PackageManager.getMirrorIndex(this);
+        String[] labels = new String[PackageManager.MIRRORS.length];
+        for (int i = 0; i < labels.length; i++) labels[i] = PackageManager.MIRRORS[i][0];
+        new AlertDialog.Builder(this)
+            .setTitle("包镜像源")
+            .setSingleChoiceItems(labels, current, (DialogInterface d, int which) -> {
+                PackageManager.setMirrorIndex(this, which);
+                Toast.makeText(this, "已切换: " + PackageManager.getMirrorLabel(which),
+                    Toast.LENGTH_SHORT).show();
+                d.dismiss();
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    /** 检查 bootstrap 更新：拉 version.json → 对比当前版本 → 有新版弹确认对话框 */
+    private void checkBootstrapUpdate() {
+        mPkgOutput.setVisibility(View.VISIBLE);
+        final String currentVer = BootstrapInstaller.getCurrentVersion(this);
+        mPkgOutput.setText("检查更新中…（当前: " + (currentVer.isEmpty() ? "未知" : currentVer) + "）");
+        BootstrapUpdater.checkUpdate(this, new BootstrapUpdater.CheckCallback() {
+            @Override
+            public void onResult(BootstrapUpdater.VersionInfo info, String currentVersion) {
+                if (info == null) {
+                    mPkgOutput.setText("已是最新版本（当前: "
+                        + (currentVersion.isEmpty() ? "未知" : currentVersion) + "）");
+                    Toast.makeText(SettingsActivity.this, "已是最新", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                mPkgOutput.setText("发现新版 bootstrap:\n  当前: "
+                    + (currentVersion.isEmpty() ? "未知" : currentVersion)
+                    + "\n  最新: " + info.version
+                    + "\n  大小: " + PackageManager.formatBytes(info.size)
+                    + "\n  build: " + info.buildId);
+                confirmBootstrapUpgrade(info);
+            }
+            @Override
+            public void onError(String message) {
+                mPkgOutput.setText("检查失败: " + message);
+                Toast.makeText(SettingsActivity.this, "检查失败: " + message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /** 弹确认对话框，用户确认后执行升级 */
+    private void confirmBootstrapUpgrade(final BootstrapUpdater.VersionInfo info) {
+        new AlertDialog.Builder(this)
+            .setTitle("升级 bootstrap")
+            .setMessage("将升级 bootstrap 到 " + info.version
+                + "\n\n升级过程中:\n"
+                + "  - 保留 var/installed/ 等已装包记录\n"
+                + "  - 保留 hold 锁定标记\n"
+                + "  - 替换 bin/ lib/ etc/ share/\n"
+                + "  - 终端会话需重启才能用新版")
+            .setPositiveButton("升级", (DialogInterface d, int w) -> performBootstrapUpgrade(info))
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    /** 执行升级：progress 显示在 mPkgOutput */
+    private void performBootstrapUpgrade(final BootstrapUpdater.VersionInfo info) {
+        BootstrapUpdater.performUpgrade(this, info, new BootstrapUpdater.UpgradeCallback() {
+            @Override
+            public void onProgress(String msg) {
+                mPkgOutput.setText("升级中: " + msg);
+            }
+            @Override
+            public void onSuccess(String summary) {
+                mPkgOutput.setText(summary + "\n\n请重启 App 让新版 bootstrap 生效。");
+                Toast.makeText(SettingsActivity.this, summary, Toast.LENGTH_LONG).show();
+            }
+            @Override
+            public void onError(String message) {
+                mPkgOutput.setText("升级失败: " + message);
+                Toast.makeText(SettingsActivity.this, "升级失败: " + message, Toast.LENGTH_LONG).show();
+            }
+        });
     }
 }

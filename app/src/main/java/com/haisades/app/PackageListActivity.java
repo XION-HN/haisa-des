@@ -85,7 +85,7 @@ public class PackageListActivity extends Activity {
         mUpgradeAllBtn.setEnabled(false);
         new Thread(() -> {
             try {
-                mAllPackages = PackageManager.fetchIndexSync();
+                mAllPackages = PackageManager.fetchIndexSync(this);
                 mInstalled = PackageManager.listInstalledSync();
                 mHandler.post(() -> {
                     applyFilter("");
@@ -146,15 +146,18 @@ public class PackageListActivity extends Activity {
 
     private void showDetailDialog(PackageManager.PackageInfo pkg) {
         int state = getState(pkg);
+        boolean held = PackageManager.isHeld(pkg.name);
         String statusText;
         String actionText;
         switch (state) {
             case STATE_UPGRADABLE:
                 statusText = "可升级：已装 " + mInstalled.get(pkg.name) + " → 索引 " + pkg.version;
+                if (held) statusText += "  [已锁定]";
                 actionText = "升级";
                 break;
             case STATE_INSTALLED:
                 statusText = "已安装（最新）：" + pkg.version;
+                if (held) statusText += "  [已锁定]";
                 actionText = "卸载";
                 break;
             default:
@@ -167,7 +170,7 @@ public class PackageListActivity extends Activity {
         else for (String d : pkg.depends) deps.append(d).append(' ');
         String sizeStr = formatSize(pkg.size);
 
-        new AlertDialog.Builder(this)
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
             .setTitle(pkg.name + "-" + pkg.version)
             .setMessage("状态: " + statusText
                 + "\n大小: " + sizeStr
@@ -180,8 +183,22 @@ public class PackageListActivity extends Activity {
                     doInstall(pkg);
                 }
             })
-            .setNegativeButton("关闭", null)
-            .show();
+            .setNegativeButton("关闭", null);
+
+        // 已装包（含可升级）才显示锁定/解锁按钮
+        if (state == STATE_INSTALLED || state == STATE_UPGRADABLE) {
+            final String holdBtnText = held ? "取消锁定" : "锁定版本";
+            b.setNeutralButton(holdBtnText, (DialogInterface d, int w) -> {
+                PackageManager.setHeld(pkg.name, !held);
+                applyFilter(mSearchInput.getText().toString().trim());
+                updateStatusBar();
+                Toast.makeText(this,
+                    !held ? "已锁定 " + pkg.name + "（upgradeAll 将跳过）"
+                          : "已解锁 " + pkg.name,
+                    Toast.LENGTH_SHORT).show();
+            });
+        }
+        b.show();
     }
 
     private void doInstall(PackageManager.PackageInfo pkg) {
@@ -226,20 +243,37 @@ public class PackageListActivity extends Activity {
         });
     }
 
-    /** 一键升级所有可升级包：串行安装，依赖拓扑由 installPackage 内部 resolveDeps 处理 */
+    /** 一键升级所有可升级包：串行安装，依赖拓扑由 installPackage 内部 resolveDeps 处理。
+     *  被 hold 的包跳过（防意外升级破坏兼容性）。 */
     private void upgradeAll() {
         final List<PackageManager.PackageInfo> targets = new ArrayList<>();
+        final List<String> heldSkipped = new ArrayList<>();
         for (PackageManager.PackageInfo p : mAllPackages) {
-            if (getState(p) == STATE_UPGRADABLE) targets.add(p);
+            if (getState(p) == STATE_UPGRADABLE) {
+                if (PackageManager.isHeld(p.name)) {
+                    heldSkipped.add(p.name);
+                } else {
+                    targets.add(p);
+                }
+            }
         }
         if (targets.isEmpty()) {
-            Toast.makeText(this, "没有可升级的包", Toast.LENGTH_SHORT).show();
+            String msg = "没有可升级的包";
+            if (!heldSkipped.isEmpty()) {
+                msg += "（" + heldSkipped.size() + " 个被锁定跳过: " + String.join(", ", heldSkipped) + "）";
+            }
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
             return;
         }
+        String msg = "将升级 " + targets.size() + " 个包：\n" + joinNames(targets);
+        if (!heldSkipped.isEmpty()) {
+            msg += "\n\n被锁定跳过 " + heldSkipped.size() + " 个: " + String.join(", ", heldSkipped)
+                 + "\n（如需升级，先在详情里取消锁定）";
+        }
+        msg += "\n\n将串行下载安装，请耐心等待。";
         new AlertDialog.Builder(this)
             .setTitle("一键升级")
-            .setMessage("将升级 " + targets.size() + " 个包：\n"
-                + joinNames(targets) + "\n\n将串行下载安装，请耐心等待。")
+            .setMessage(msg)
             .setPositiveButton("升级", (DialogInterface d, int w) -> runUpgradeAll(targets))
             .setNegativeButton("取消", null)
             .show();
@@ -254,7 +288,8 @@ public class PackageListActivity extends Activity {
                 final String name = p.name;
                 mHandler.post(() -> mStatusBar.setText("升级 " + name + " …"));
                 try {
-                    String result = PackageManager.installOneSync(p);
+                    // installOneSync 内部 downloadFileWithRetry 会按当前镜像重写 + 重试 + 切换
+                    String result = PackageManager.installOneSync(PackageListActivity.this, p, null);
                     log.append(result).append('\n');
                     ok++;
                 } catch (Exception e) {
@@ -316,16 +351,19 @@ public class PackageListActivity extends Activity {
 
             sizeInfo.setText(formatSize(pkg.size));
 
+            // 锁定标记后缀（仅已装包显示）
+            String heldSuffix = PackageManager.isHeld(pkg.name) ? "  [锁]" : "";
+
             switch (state) {
                 case STATE_UPGRADABLE:
-                    tag.setText("可升级");
+                    tag.setText("可升级" + heldSuffix);
                     tag.setTextColor(0xFFFFCC80);
                     versionInfo.setText(mInstalled.get(pkg.name) + " → " + pkg.version);
                     actionBtn.setText("升级");
                     actionBtn.setTextColor(0xFFFFCC80);
                     break;
                 case STATE_INSTALLED:
-                    tag.setText("已装");
+                    tag.setText("已装" + heldSuffix);
                     tag.setTextColor(0xFFA5D6A7);
                     versionInfo.setText(pkg.version);
                     actionBtn.setText("卸载");
