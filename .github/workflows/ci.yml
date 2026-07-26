@@ -8,106 +8,26 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# -----------------------------------------------------------
+# 软件仓库 CI（仅 Android Java 构建）
+#
+# bootstrap 交叉编译已移到 XION-HN/haisa-des-bootstrap 仓库独立 CI，
+# 本仓库每次 push 不再重建 bootstrap（省 10+ 分钟）。
+# apk job 从公开发布仓库 XION-HN/haisa-des-repo 的 Releases latest/download/
+# 拉预构建的 bootstrap-arm64-v8a.zip 注入 APK assets。
+#
+# 资源流转：
+#   haisa-des-bootstrap CI (tag) → 上传到 haisa-des-repo Releases
+#   haisa-des 软件 CI (此文件)  → 从 Releases latest/download/ 拉 bootstrap.zip
+#   App 端                       → 从 Releases latest/download/ 拉 packages.json
+#
+# 首次跑（Releases 还没有 bootstrap）：用占位 zip 让 assembleDebug 通过，
+# 仅验证 Java 编译。tag 触发时若 Releases 还没东西，应先去 bootstrap 仓库发 tag。
+# -----------------------------------------------------------
+
 jobs:
-  # -----------------------------------------------------------
-  # 交叉编译：NDK r29 构建 14 个包（含 Python 3.13 + pip）→ bootstrap zip + 单包 tar.gz + packages.json
-  # prod = 正式 prefix（打进 APK）；test = Termux 冒烟 prefix
-  # -----------------------------------------------------------
-  bootstrap:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [prod, test]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK r29
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "ndk;29.0.14206865"
-
-      - name: Build all packages
-        env:
-          VARIANT: ${{ matrix.variant }}
-          JOBS: 4
-        run: |
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
-          cd build-system
-          ./build.sh build all
-          ./make-bootstrap.sh
-
-      - name: Generate packages index (prod only)
-        if: matrix.variant == 'prod'
-        env:
-          # tag 触发时用真实 tag；push 触发时用 latest 占位（仅作 artifact 上传）
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          cd build-system
-          ./make-packages-index.sh
-
-      - name: Generate bootstrap version json (prod only)
-        if: matrix.variant == 'prod'
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          cd build-system
-          ./make-bootstrap-version.sh
-
-      - name: Upload bootstrap artifacts
-        continue-on-error: true   # 配额耗尽时不阻塞 CI（代码已验证）
-        uses: actions/upload-artifact@v4
-        with:
-          name: bootstrap-${{ matrix.variant }}
-          path: |
-            build-system/dist/*.zip
-            build-system/dist/packages/*.tar.gz
-            build-system/dist/packages.json
-            build-system/dist/bootstrap-version.json
-          if-no-files-found: warn
-          retention-days: 7
-
-  # -----------------------------------------------------------
-  # 通知公开发布仓库跑"资源 CI"
-  #
-  # 软件开发 CI（bootstrap + apk）只在私有仓库跑，不碰 release 资产。
-  # 打 tag 时，这里向公开仓库 XION-HN/haisa-des-repo 发 repository_dispatch 事件，
-  # 把本次 run_id 和 tag 传过去；公开仓库 CI 收到后用 PAT 反向下载本仓库的
-  # bootstrap-prod artifact，再上传到它自己的 GitHub Releases。
-  # 这样：私有仓库专注软件构建，公开仓库专注 release 资产托管，职责分离。
-  # -----------------------------------------------------------
-  notify-release:
-    needs: [bootstrap, apk]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dispatch to public release repo
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
-        run: |
-          curl -sS -X POST \
-            -H "Authorization: token $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/XION-HN/haisa-des-repo/dispatches \
-            -d "{
-              \"event_type\": \"publish-release\",
-              \"client_payload\": {
-                \"tag\": \"${{ github.ref_name }}\",
-                \"source_repo\": \"${{ github.repository }}\",
-                \"source_run_id\": \"${{ github.run_id }}\"
-              }
-            }"
-          echo "已通知 haisa-des-repo 跑资源 CI（tag=${{ github.ref_name }}, run_id=${{ github.run_id }}）"
-
-  # -----------------------------------------------------------
-  # APK：注入 prod bootstrap 资产 → assembleDebug（侧载分发）
-  # -----------------------------------------------------------
   apk:
     runs-on: ubuntu-latest
-    needs: bootstrap
     steps:
       - uses: actions/checkout@v4
 
@@ -125,26 +45,27 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865"
 
-      - name: Inject prod bootstrap asset
+      - name: Download bootstrap.zip from Releases
         id: dl_bootstrap
-        continue-on-error: true   # 配额耗尽时 download 失败不阻塞，assembleDebug 仍跑（验证 Java 编译）
-        uses: actions/download-artifact@v4
-        with:
-          name: bootstrap-prod
-          path: /tmp/bootstrap
-
-      - name: Place asset
-        if: steps.dl_bootstrap.outcome == 'success'
+        continue-on-error: true
         run: |
-          ls -la /tmp/bootstrap/
+          set -e
           mkdir -p app/src/main/assets/bootstrap
-          cp /tmp/bootstrap/bootstrap-arm64-v8a.zip app/src/main/assets/bootstrap/
-          ls -la app/src/main/assets/bootstrap/
+          URL="https://github.com/XION-HN/haisa-des-repo/releases/latest/download/bootstrap-arm64-v8a.zip"
+          echo "下载 $URL ..."
+          # -L 跟随 302，-f 失败时返回非 0
+          if curl -L -f --retry 3 --retry-delay 2 -o app/src/main/assets/bootstrap/bootstrap-arm64-v8a.zip "$URL"; then
+            ls -la app/src/main/assets/bootstrap/
+            echo "downloaded=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠ Releases 暂无 bootstrap（首次跑或 bootstrap 仓库还没发 tag）"
+            echo "downloaded=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Create placeholder asset (when download skipped)
-        if: steps.dl_bootstrap.outcome != 'success'
+      - name: Create placeholder asset (when download failed)
+        if: steps.dl_bootstrap.outputs.downloaded != 'true'
         run: |
-          echo "⚠ bootstrap download 失败（配额？），用占位 zip 让 assembleDebug 通过验证 Java 编译"
+          echo "⚠ 用占位 zip 让 assembleDebug 通过验证 Java 编译（产物 APK 不能用于真机）"
           mkdir -p app/src/main/assets/bootstrap
           printf 'placeholder' > app/src/main/assets/bootstrap/bootstrap-arm64-v8a.zip
 
@@ -152,7 +73,7 @@ jobs:
         run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
       - name: Upload APK
-        continue-on-error: true   # 同 bootstrap，配额耗尽时不阻塞 CI
+        continue-on-error: true   # 配额耗尽时不阻塞 CI
         uses: actions/upload-artifact@v4
         with:
           name: haisa-des-apk

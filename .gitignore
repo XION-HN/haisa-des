@@ -6,13 +6,8 @@ local.properties
 *.iml
 .idea/
 
-# bootstrap 资产由 CI 注入（build-system 产物）
+# bootstrap 资产由 CI 注入（来自 haisa-des-bootstrap 仓库构建产物）
 app/src/main/assets/bootstrap/*.zip
-
-# build-system 工作区与产物
-build-system/.cache/
-build-system/.work/
-build-system/dist/
 
 # 系统文件
 .DS_Store

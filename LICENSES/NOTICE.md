@@ -22,5 +22,5 @@
 | ca-certificates | 2025-07-15 | MPL-2.0 | https://curl.se/ca/ |
 
 上述包均为独立进程/独立库分发（mere aggregation），不构成对本 App 专有代码的许可传染。
-各包的精确源码 tarball URL 与 sha256 固定于 `build-system/packages/<name>/build.sh`，
+各包的精确源码 tarball URL 与 sha256 固定于 `haisa-des-bootstrap` 仓库的 `build-system/packages/<name>/build.sh`，
 构建配方（configure 参数等）同目录可查，满足"对应源码 + 构建脚本"的提供义务。
