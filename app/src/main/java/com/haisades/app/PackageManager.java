@@ -882,4 +882,209 @@ public final class PackageManager {
         if (bytes >= 1024) return String.format("%.1fKB", bytes / 1024.0);
         return bytes + "B";
     }
+
+    // ===========================================================
+    // M3.1 B3: 预编译 wheel 安装路径
+    //
+    // wheels-index.json schema（由 build-system/make-wheels-index.sh 生成）:
+    //   {
+    //     "repo_version": 1, "abi": "arm64-v8a",
+    //     "wheels": [{
+    //       "name","version","py_tag","abi_tag","platform_tag","build_tag",
+    //       "size","sha256","filename","download_url","desc"
+    //     }]
+    //   }
+    //
+    // installPythonPackage 统一入口：
+    //   - 先查 wheels-index.json 命中 → installWheelSync（下载 wheel + pip install <local.whl> --no-index）
+    //   - 未命中 → pipInstallSync 降级到 PyPI 直拉（设备端 pip 走自己的 manywheel 选型）
+    // ===========================================================
+
+    /** 预编译 wheel 元数据 */
+    public static class WheelInfo {
+        public final String name;
+        public final String version;
+        public final String pyTag;
+        public final String abiTag;
+        public final String platformTag;
+        public final String buildTag;
+        public final long size;
+        public final String sha256;
+        public final String filename;
+        public final String downloadUrl;
+        public final String desc;
+
+        WheelInfo(JSONObject o) throws Exception {
+            name = o.getString("name");
+            version = o.getString("version");
+            pyTag = o.optString("py_tag", "");
+            abiTag = o.optString("abi_tag", "");
+            platformTag = o.optString("platform_tag", "");
+            buildTag = o.optString("build_tag", "");
+            size = o.optLong("size", 0);
+            sha256 = o.getString("sha256");
+            filename = o.getString("filename");
+            downloadUrl = o.getString("download_url");
+            desc = o.optString("desc", "");
+        }
+
+        public String getDisplayName() { return name + "-" + version; }
+    }
+
+    /** 异步拉取 wheel 索引。callback 在主线程回调。 */
+    public static void fetchWheelsIndex(Context ctx, Callback cb) {
+        new Thread(() -> {
+            try {
+                List<WheelInfo> wheels = fetchWheelsIndexSync(ctx);
+                Handler h = new Handler(Looper.getMainLooper());
+                h.post(() -> cb.onSuccess(formatWheelsSummary(wheels)));
+            } catch (Exception e) {
+                Log.e(TAG, "fetchWheelsIndex failed", e);
+                Handler h = new Handler(Looper.getMainLooper());
+                h.post(() -> cb.onError(e.getMessage()));
+            }
+        }, "wheels-fetch").start();
+    }
+
+    static List<WheelInfo> fetchWheelsIndexSync(Context ctx) throws Exception {
+        String url = GITHUB_BASE + "/releases/latest/download/wheels-index.json";
+        String body = httpGetJsonWithRetry(ctx, url);
+        JSONObject root = new JSONObject(body);
+        JSONArray arr = root.getJSONArray("wheels");
+        List<WheelInfo> wheels = new ArrayList<>();
+        for (int i = 0; i < arr.length(); i++) {
+            wheels.add(new WheelInfo(arr.getJSONObject(i)));
+        }
+        return wheels;
+    }
+
+    /** 统一入口：安装 Python 包。
+     *  - 优先从 wheels-index 命中预编译 wheel（避免设备端 gcc 编译）
+     *  - 未命中则降级到 pip install（PyPI 直拉，依赖 pip 自身的 manywheel 选型） */
+    public static void installPythonPackage(Context ctx, String pkgName, Callback cb) {
+        new Thread(() -> {
+            try {
+                List<WheelInfo> wheels = fetchWheelsIndexSync(ctx);
+                WheelInfo match = null;
+                for (WheelInfo w : wheels) {
+                    if (w.name.equalsIgnoreCase(pkgName)) { match = w; break; }
+                }
+                Handler h = new Handler(Looper.getMainLooper());
+                String result;
+                if (match != null) {
+                    h.post(() -> cb.onProgress("命中预编译 wheel: " + match.filename));
+                    result = installWheelSync(ctx, match, cb);
+                } else {
+                    h.post(() -> cb.onProgress("仓库无预编译 wheel，降级 pip install（PyPI）"));
+                    result = pipInstallSync(ctx, pkgName, cb);
+                }
+                final String r = result;
+                h.post(() -> cb.onSuccess(r));
+            } catch (Exception e) {
+                Log.e(TAG, "installPythonPackage failed", e);
+                Handler h = new Handler(Looper.getMainLooper());
+                h.post(() -> cb.onError(e.getMessage()));
+            }
+        }, "pip-install").start();
+    }
+
+    /** 安装预编译 wheel：下载到 cache → sha256 校验 → pip install <local.whl> --no-index --no-deps */
+    static String installWheelSync(Context ctx, WheelInfo w, Callback cb) throws Exception {
+        File cacheDir = new File(ctx.getFilesDir(), "wheel-cache");
+        if (!cacheDir.exists()) cacheDir.mkdirs();
+        File wheelFile = new File(cacheDir, w.filename);
+
+        // 已存在且 sha256 匹配则跳过下载
+        if (!wheelFile.exists() || !sha256Matches(wheelFile, w.sha256)) {
+            DownloadProgress dp = (downloaded, total) -> {
+                String msg;
+                if (total > 0) {
+                    int pct = (int) (downloaded * 100 / total);
+                    msg = "下载 wheel " + w.name + " " + pct + "% ("
+                        + formatBytes(downloaded) + "/" + formatBytes(total) + ")";
+                } else {
+                    msg = "下载 wheel " + w.name + " " + formatBytes(downloaded);
+                }
+                new Handler(Looper.getMainLooper()).post(() -> cb.onProgress(msg));
+            };
+            downloadFileWithRetry(ctx, w.downloadUrl, wheelFile, dp);
+        } else {
+            new Handler(Looper.getMainLooper()).post(() -> cb.onProgress("wheel 已缓存，跳过下载"));
+        }
+
+        if (!sha256Matches(wheelFile, w.sha256)) {
+            throw new RuntimeException("wheel sha256 校验失败: " + w.filename);
+        }
+
+        // 调用设备端 pip 安装本地 wheel
+        // --no-index 避免误从 PyPI 拉其他版本；--no-deps 避免依赖解析（依赖需用户单独装或本已在 bootstrap）
+        String pipBin = App.PREFIX + "/bin/pip";
+        String[] envp = buildPipEnvp();
+        String out = runShell(envp, pipBin, "install", "--no-index", "--no-deps",
+                              wheelFile.getAbsolutePath());
+        return "已安装 wheel: " + w.filename + "\n" + out;
+    }
+
+    /** 降级路径：直接 pip install <pkgName>（设备端 pip 走 PyPI） */
+    static String pipInstallSync(Context ctx, String pkgName, Callback cb) throws Exception {
+        String pipBin = App.PREFIX + "/bin/pip";
+        String[] envp = buildPipEnvp();
+        String out = runShell(envp, pipBin, "install", pkgName);
+        return "pip install " + pkgName + ":\n" + out;
+    }
+
+    /** pip 子进程环境：与终端会话对齐，确保 PATH/LD_LIBRARY_PATH/TMPDIR 等可用 */
+    private static String[] buildPipEnvp() {
+        return new String[]{
+            "PATH=" + App.PREFIX + "/bin",
+            "LD_LIBRARY_PATH=" + App.PREFIX + "/lib",
+            "PYTHONPATH=",
+            "HOME=" + App.HOME_PATH,
+            "TMPDIR=" + App.PREFIX + "/tmp",
+            "PREFIX=" + App.PREFIX,
+            "PYTHON_BASIC_REPL=1",
+        };
+    }
+
+    /** 运行命令并捕获 stdout+stderr（设备端 aarch64 ELF 由 App 私有目录 exec）。
+     *  cwd=null 沿用 Diagnostics 风格（已 targetSdk=28 允许 W^X exec） */
+    private static String runShell(String[] envp, String... cmd) {
+        StringBuilder out = new StringBuilder();
+        try {
+            Process p = Runtime.getRuntime().exec(cmd, envp, null);
+            Thread t = new Thread(() -> {
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                    String line;
+                    while ((line = r.readLine()) != null) out.append(line).append('\n');
+                } catch (Exception ignored) { }
+            });
+            t.start();
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getErrorStream()))) {
+                String line;
+                while ((line = r.readLine()) != null) out.append("[stderr] ").append(line).append('\n');
+            }
+            t.join();
+            int code = p.waitFor();
+            if (code != 0) {
+                out.append("[exit=").append(code).append("]\n");
+            }
+        } catch (Exception e) {
+            out.append("[runShell error] ").append(e.getMessage()).append('\n');
+        }
+        return out.toString();
+    }
+
+    /** 格式化 wheel 索引摘要 */
+    static String formatWheelsSummary(List<WheelInfo> wheels) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("预编译 wheel 共 ").append(wheels.size()).append(" 个:\n\n");
+        for (WheelInfo w : wheels) {
+            String sizeStr = formatSize(w.size);
+            sb.append(String.format("%-14s %-10s %-8s %-12s %s",
+                    w.name, w.version, w.pyTag, sizeStr, w.platformTag));
+            if (!w.desc.isEmpty()) sb.append("  // ").append(w.desc);
+            sb.append('\n');
+        }
+        return sb.toString().trim();
+    }
 }

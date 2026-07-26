@@ -1,15 +1,16 @@
 # 架构总览
 
-本文档描述 HaisaDes 当前（Phase 1 技术验证完成）的整体架构，供后续维护参考。
+本文档描述 HaisaDes 当前（M3.1 进行中）的整体架构，供后续维护参考。
 
 ## 三层架构
 
 ```
 ┌─ 构建侧 build-system/（Linux x86_64 主机或 CI，NDK r29）
-│   交叉编译 14 个包 → bootstrap zip + 单包 tar.gz
+│   交叉编译 21 个包 → bootstrap zip + 单包 tar.gz
+│   wheels/ → PyPI aarch64 manywheel 镜像 + pygame 源码编译
 │
 ├─ App 侧 app/（Java，minSdk=28 / targetSdk=28）
-│   终端会话 + 诊断自检 + 崩溃日志 + Bootstrap 安装器
+│   终端会话 + 诊断自检 + 崩溃日志 + Bootstrap 安装器 + 包管理器 + wheel 安装
 │
 └─ 终端模块 terminal-view/ + terminal-emulator/（vendored Apache 2.0）
     PTY 渲染 + 终端仿真
@@ -24,18 +25,28 @@ build-system/
 ├── build.sh              # 入口：list / build / bootstrap / clean
 ├── config.sh             # 全局配置（PREFIX / TARGET_TRIPLE / API_LEVEL 等）
 ├── make-bootstrap.sh     # staging → bootstrap zip + 单包 tar.gz
+├── make-packages-index.sh # 扫描 packages/*.tar.gz 生成 packages.json
+├── make-wheels-index.sh   # 扫描 wheels/*.whl 生成 wheels-index.json（M3.1）
 ├── lib/common.sh         # 公共函数（fetch/extract/merge_stage/gnu_configure）
 ├── toolchains/
 │   ├── ndk-r29.sh        # 权威工具链（CI 用）
 │   └── termux-local.sh   # Termux 本机冒烟（仅验证）
-└── packages/<name>/build.sh  # 每包一个（元数据 + pkg_build）
+├── packages/<name>/build.sh   # 原生包（21 个：14 基础 + 7 SDL2 系列）
+└── wheels/                     # M3.1 预编译 wheel 管线
+    ├── build-wheels.sh          # 入口：list / build / clean
+    ├── lib/cross-env.sh         # source 方法交叉环境（_PYTHON_HOST_PLATFORM 等）
+    └── packages/<name>/build.sh # wheel 包定义（download | source）
 ```
 
 ### 构建流程
 
-1. `build.sh build all` → 按依赖顺序构建 14 个包
+1. `build.sh build all` → 按依赖顺序构建 21 个包（14 基础 + 7 SDL2 系列）
 2. 每个包：`fetch_pkg`（下载+sha256校验）→ `extract_pkg`（原子解压）→ `pkg_build` → `merge_stage`
 3. `make-bootstrap.sh`：记录符号链接到 `SYMLINKS.txt` → 剔除符号链接 → zip 打包 + 每包独立 tar.gz
+4. `wheels/build-wheels.sh build all` → 独立产物到 `dist/wheels/`：
+   - `download` 方法：从 PyPI 拉 aarch64 manywheel（numpy/Pillow/lxml）
+   - `source` 方法：用 staging 的 Python + SDL2 交叉编译（pygame，需 QEMU binfmt）
+5. `make-wheels-index.sh` → 扫描 `dist/wheels/*.whl` 生成 `wheels-index.json`
 
 ### 变体
 
