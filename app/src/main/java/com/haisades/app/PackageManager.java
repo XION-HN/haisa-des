@@ -970,10 +970,11 @@ public final class PackageManager {
                     if (w.name.equalsIgnoreCase(pkgName)) { match = w; break; }
                 }
                 Handler h = new Handler(Looper.getMainLooper());
+                final WheelInfo matched = match;
                 String result;
-                if (match != null) {
-                    h.post(() -> cb.onProgress("命中预编译 wheel: " + match.filename));
-                    result = installWheelSync(ctx, match, cb);
+                if (matched != null) {
+                    h.post(() -> cb.onProgress("命中预编译 wheel: " + matched.filename));
+                    result = installWheelSync(ctx, matched, cb);
                 } else {
                     h.post(() -> cb.onProgress("仓库无预编译 wheel，降级 pip install（PyPI）"));
                     result = pipInstallSync(ctx, pkgName, cb);
