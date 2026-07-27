@@ -6,6 +6,17 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 终端 cp/ls /sdcard 用：targetSdk=28 走 legacy storage 模型，
+         在任何 Android 版本上申请运行时权限后即可读写 /storage/emulated/0。
+         maxSdkVersion=28：Android 10+ scoped storage 已不再用这俩旧权限，
+         但 targetSdk=28 仍按 legacy 处理，仅声明不申请运行时不会触发。 -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
         android:name=".App"
         android:label="@string/app_name"

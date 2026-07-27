@@ -1,10 +1,12 @@
 package com.haisades;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
@@ -25,6 +27,8 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "MainActivity";
     private static final int TRANSCRIPT_ROWS = 2000;
+    // /sdcard 读写权限请求码（targetSdk=28 → legacy storage，授权后终端可 cp /sdcard）
+    private static final int REQ_STORAGE = 1001;
 
     private TerminalView mTerminalView;
     private TerminalSession mSession;
@@ -55,7 +59,32 @@ public class MainActivity extends Activity {
         // 安装失败时点击重试
         mOverlay.setOnClickListener(v -> ensureBootstrap());
 
-        ensureBootstrap();
+        // 先请求 /sdcard 读写权限（targetSdk=28 legacy storage，授权后终端子进程
+        // 即继承读 /storage/emulated/0 的能力，可 cp /sdcard 文件）。
+        // 没拿到也继续启动终端（用户可能只在内置存储工作，不强阻塞）。
+        ensureStoragePermissionThen(this::ensureBootstrap);
+    }
+
+    private void ensureStoragePermissionThen(Runnable onReady) {
+        if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED) {
+            onReady.run();
+            return;
+        }
+        requestPermissions(new String[]{
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+        }, REQ_STORAGE);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        // 无论授权与否都继续启动终端：用户拒绝时只是 cp /sdcard 会失败，
+        // 不应阻塞终端会话本身
+        if (requestCode == REQ_STORAGE) {
+            ensureBootstrap();
+        }
     }
 
     private void ensureBootstrap() {
