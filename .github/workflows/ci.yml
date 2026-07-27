@@ -48,7 +48,7 @@ jobs:
         env:
           # 指定 bootstrap 版本 tag（避免 latest 别名滞后导致的版本错配）
           # 推 bootstrap 仓库新 tag 后，同步改这里再发 App tag
-          BOOTSTRAP_TAG: v0.3.0
+          BOOTSTRAP_TAG: v0.4.0
         run: |
           set -e
           mkdir -p app/src/main/assets/bootstrap
@@ -117,7 +117,7 @@ jobs:
               --title "haisa-des $TAG" \
               --notes "haisa-des release $TAG
 
-          debug APK，内置 bootstrap v0.3.0（Python 3.13 + pip + 21 个原生包）。
+          debug APK，内置 bootstrap v0.4.0（精简版：bash + apt + curl 等基础工具，python 需 apt install python 安装）。
 
           下载 \`haisa-des-${TAG}-debug.apk\` 安装到 arm64-v8a Android 设备。" \
               --latest
