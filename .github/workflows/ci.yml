@@ -48,17 +48,21 @@ jobs:
       - name: Download bootstrap.zip from Releases
         id: dl_bootstrap
         continue-on-error: true
+        env:
+          # 指定 bootstrap 版本 tag（避免 latest 别名滞后导致的版本错配）
+          # 推 bootstrap 仓库新 tag 后，同步改这里再发 App tag
+          BOOTSTRAP_TAG: v0.3.0
         run: |
           set -e
           mkdir -p app/src/main/assets/bootstrap
-          URL="https://github.com/XION-HN/haisa-des-repo/releases/latest/download/bootstrap-arm64-v8a.zip"
+          URL="https://github.com/XION-HN/haisa-des-repo/releases/download/${BOOTSTRAP_TAG}/bootstrap-arm64-v8a.zip"
           echo "下载 $URL ..."
           # -L 跟随 302，-f 失败时返回非 0
           if curl -L -f --retry 3 --retry-delay 2 -o app/src/main/assets/bootstrap/bootstrap-arm64-v8a.zip "$URL"; then
             ls -la app/src/main/assets/bootstrap/
             echo "downloaded=true" >> $GITHUB_OUTPUT
           else
-            echo "⚠ Releases 暂无 bootstrap（首次跑或 bootstrap 仓库还没发 tag）"
+            echo "⚠ Releases 暂无 bootstrap $BOOTSTRAP_TAG（先去 bootstrap 仓库发 tag）"
             echo "downloaded=false" >> $GITHUB_OUTPUT
           fi
 
