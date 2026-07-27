@@ -9,20 +9,17 @@ on:
   workflow_dispatch:
 
 # -----------------------------------------------------------
-# 软件仓库 CI（仅 Android Java 构建）
+# 软件 CI（在 xion-hn-studio 账号跑，避开 XION-HN Actions 配额耗尽问题）
+# 仓库本身是 XION-HN/haisa-des 的镜像，源码仍以 XION-HN/haisa-des 为权威。
 #
-# bootstrap 交叉编译已移到 XION-HN/haisa-des-bootstrap 仓库独立 CI，
-# 本仓库每次 push 不再重建 bootstrap（省 10+ 分钟）。
-# apk job 从公开发布仓库 XION-HN/haisa-des-repo 的 Releases latest/download/
-# 拉预构建的 bootstrap-arm64-v8a.zip 注入 APK assets。
+# bootstrap 交叉编译在 xion-hn-studio/haisa-des-bootstrap 独立 CI 跑，
+# 产物发布到 XION-HN/haisa-des-repo Releases。
 #
 # 资源流转：
-#   haisa-des-bootstrap CI (tag) → 上传到 haisa-des-repo Releases
-#   haisa-des 软件 CI (此文件)  → 从 Releases latest/download/ 拉 bootstrap.zip
-#   App 端                       → 从 Releases latest/download/ 拉 packages.json
-#
-# 首次跑（Releases 还没有 bootstrap）：用占位 zip 让 assembleDebug 通过，
-# 仅验证 Java 编译。tag 触发时若 Releases 还没东西，应先去 bootstrap 仓库发 tag。
+#   haisa-des-bootstrap CI (tag) → 上传到 XION-HN/haisa-des-repo Releases
+#   本 CI (push/tag)            → 从 Releases download/<tag>/ 拉 bootstrap.zip
+#   tag 触发                     → 上传 APK 到 XION-HN/haisa-des-repo Releases
+#   App 端                      → 从 Releases latest/download/ 拉 packages.json
 # -----------------------------------------------------------
 
 jobs:
@@ -84,3 +81,38 @@ jobs:
           path: app/build/outputs/apk/**/*.apk
           if-no-files-found: warn
           retention-days: 7
+
+      # -----------------------------------------------------------
+      # tag 触发：把 APK 上传到 XION-HN/haisa-des-repo Releases
+      # 与 bootstrap 发布同一 release tag，让用户一处下载 APK + bootstrap
+      # -----------------------------------------------------------
+      - name: Publish APK to haisa-des-repo Releases
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          if [ -z "$GH_TOKEN" ]; then
+            echo "错误: secrets.RELEASE_REPO_TOKEN 未配置（需 XION-HN/haisa-des-repo 的 PAT，contents:write 权限）"
+            exit 1
+          fi
+
+          REPO="XION-HN/haisa-des-repo"
+          APK_DIR="app/build/outputs/apk/debug"
+          APK_NAME="haisa-des-${TAG}-debug.apk"
+
+          echo "=== 发布 APK 到 $REPO release $TAG ==="
+          ls -la "$APK_DIR/"
+
+          # 重命名 APK 为带版本号的文件名
+          cp "$APK_DIR/app-debug.apk" "$APK_DIR/$APK_NAME"
+
+          # 上传到指定 tag 的 release（--clobber 覆盖同名）
+          gh release upload "$TAG" --repo "$REPO" \
+            "$APK_DIR/$APK_NAME" \
+            --clobber
+
+          echo "✓ 已发布 $APK_NAME 到 $REPO release $TAG"
+          echo "  下载链接（公开）:"
+          echo "    https://github.com/$REPO/releases/download/$TAG/$APK_NAME"
