@@ -356,46 +356,34 @@ public final class PackageManager {
         }, "pkg-uninstall").start();
     }
 
-    /** 卸载单个包：读文件清单 → 按引用计数删除文件 → 清除清单和版本标记。
-     *  引用计数：遍历所有 *.files 清单，统计每个路径被多少个包引用。
-     *  仅当引用计数=1（只被当前包引用）时才删文件，避免误删共享库。 */
+    /** 卸载包：调用 dpkg -r <name>。
+     *
+     *  改造说明（真 apt 集成）:
+     *  旧实现自己维护 *.files 清单 + 引用计数删除，复杂且易误删共享库。
+     *  现改为调用 dpkg -r <name>，由 dpkg 根据 /var/lib/dpkg/info/<pkg>.list
+     *  删除文件（dpkg 自己维护引用关系，不会误删被其他包依赖的共享库）。
+     *
+     *  hold 标记仍由 App 端 PackageManager 维护（dpkg 的 hold 在
+     *  /var/lib/dpkg/selections，但 App 端 UI 层的 hold 语义独立保留）。 */
     static String uninstallOneSync(String pkgName) throws Exception {
+        ensureDpkgAvailable();
         String ver = getInstalledVersion(pkgName);
         if (ver == null) {
             return pkgName + " 未安装，无需卸载";
         }
-        List<String> files = readFileList(pkgName);
 
-        // 构建全局引用计数表：path → 引用它的包数量
-        Map<String, Integer> refCount = buildFileReferenceCount();
-
-        int deleted = 0, skipped = 0;
-        // 逆序删除：先删文件，再删可能变空的目录
-        Collections.sort(files, Collections.reverseOrder());
-        for (String rel : files) {
-            int count = refCount.getOrDefault(rel, 0);
-            if (count > 1) {
-                // 被其他包引用，跳过
-                skipped++;
-                continue;
-            }
-            File f = new File(App.PREFIX, rel);
-            if (f.exists()) {
-                // 符号链接和普通文件都走 delete()（符号链接删链接本身不删目标）
-                if (f.delete()) {
-                    deleted++;
-                }
-            }
+        // 调用 dpkg -r 移除包（保留配置文件，对应 dpkg 默认行为）
+        StringBuilder out = new StringBuilder();
+        int code = runDpkg(out, 120, "-r", pkgName);
+        if (code != 0) {
+            throw new RuntimeException(pkgName + " dpkg -r 失败 (code=" + code + "):\n"
+                + out.toString().trim());
         }
-        // 清理可能变空的父目录（不递归删非空目录）
-        cleanupEmptyDirs(files);
 
-        // 删除文件清单、版本标记、hold 锁定标记
-        new File(INSTALLED_DIR, pkgName + ".files").delete();
+        // 清理 App 端 hold 标记（dpkg -r 不感知 App 端的 *.hold 文件）
         new File(INSTALLED_DIR, pkgName + ".hold").delete();
-        new File(INSTALLED_DIR, pkgName).delete();
 
-        return pkgName + "-" + ver + " 已卸载（删除 " + deleted + " 个文件，跳过 " + skipped + " 个共享文件）";
+        return pkgName + "-" + ver + " 已卸载\n" + out.toString().trim();
     }
 
     /** 扫描所有已装包的 *.files 清单，构建 path → 引用计数 表 */
@@ -478,11 +466,26 @@ public final class PackageManager {
         order.add(p);
     }
 
-    /** 安装单个包（可带下载进度回调）：下载 → 校验 → （升级时清理旧版残留）→ 解压 → 重建符号链接 → 记录文件清单 → 记录已安装。
+    /** 安装单个包（可带下载进度回调）：下载 → sha256 校验 → dpkg -i 安装。
+     *
+     *  改造说明（真 apt 集成）:
+     *  旧实现用 tar -xzf 解压 .deb 并自己管理文件清单/符号链接/引用计数，
+     *  与 Debian 标准 .deb 格式不兼容（.deb 是 ar 归档，非 tar.gz）。
+     *  现改为调用 dpkg -i <deb>，由 dpkg 接管：
+     *    - 解压 .deb（ar → debian-binary / control.tar.gz / data.tar.gz）
+     *    - 维护文件清单 /var/lib/dpkg/info/<pkg>.list
+     *    - 维护包状态 /var/lib/dpkg/status（Version / Status / Depends）
+     *    - 重建符号链接（data.tar.gz 内含 symlink）
+     *    - 升级时自动清理旧版残留
+     *
+     *  下载 / sha256 / 镜像切换逻辑保留（dpkg 不负责下载，App 端从 Releases 拉）。
+     *
      *  ctx != null 时下载走 downloadFileWithRetry（镜像环形切换 + 指数退避）；
      *  ctx == null 时回退到 downloadTo 单次直连（用于无 Context 的旧调用路径）。 */
     static String installOneSync(Context ctx, PackageInfo pkg, DownloadProgress progress) throws Exception {
-        // 已安装相同版本则跳过
+        ensureDpkgAvailable();
+
+        // 已安装相同版本则跳过（读 dpkg status）
         String installedVer = getInstalledVersion(pkg.name);
         if (pkg.version.equals(installedVer)) {
             return pkg.getDisplayName() + " 已是最新（" + pkg.version + "），跳过";
@@ -492,68 +495,36 @@ public final class PackageManager {
 
         File cacheDir = new File(CACHE_DIR);
         cacheDir.mkdirs();
-        File tarball = new File(cacheDir, pkg.filename);
+        File debFile = new File(cacheDir, pkg.filename);
 
         // 下载（如缓存命中且 sha256 匹配则跳过下载）
-        if (!tarball.exists() || !sha256Matches(tarball, pkg.sha256)) {
+        if (!debFile.exists() || !sha256Matches(debFile, pkg.sha256)) {
             if (ctx != null) {
-                downloadFileWithRetry(ctx, pkg.downloadUrl, tarball, progress);
+                downloadFileWithRetry(ctx, pkg.downloadUrl, debFile, progress);
             } else {
-                downloadTo(pkg.downloadUrl, tarball, progress);
+                downloadTo(pkg.downloadUrl, debFile, progress);
             }
         }
         // 下载后再次校验
-        if (!sha256Matches(tarball, pkg.sha256)) {
+        if (!sha256Matches(debFile, pkg.sha256)) {
             throw new RuntimeException(pkg.filename + " sha256 校验失败（文件损坏或被篡改）");
         }
 
-        // 升级场景：先列出新版将包含的文件集（tar 内文件 + 符号链接），
-        // 删除旧版清单中"新版不再包含"的文件，避免旧版残留堆积。
-        // 共享库仍按引用计数保护（被其他包引用则跳过）。
-        int upgradedRemoved = 0;
-        if (isUpgrade) {
-            Set<String> newFileSet = listTarballFiles(tarball, pkg.symlinks);
-            upgradedRemoved = cleanupStaleFiles(pkg.name, newFileSet);
+        // 调用 dpkg -i 安装 .deb
+        // dpkg 接管：解压 data.tar.gz → 重建符号链接 → 维护文件清单 → 更新 status
+        // 升级时自动清理旧版残留（dpkg -i 对已装包执行升级流程）
+        StringBuilder out = new StringBuilder();
+        int code = runDpkg(out, 300, "-i", debFile.getAbsolutePath());
+        if (code != 0) {
+            throw new RuntimeException(pkg.filename + " dpkg -i 失败 (code=" + code + "):\n"
+                + out.toString().trim());
         }
-
-        // 解压前扫描 $PREFIX 现有文件集合（用于后续 diff 出新增文件）
-        Set<String> before = scanPrefixFiles();
-
-        // 解压到 $PREFIX
-        extractTarGz(tarball, new File(App.PREFIX));
-
-        // 重建符号链接（tar.gz 不含 symlink）
-        for (String[] sl : pkg.symlinks) {
-            File link = new File(App.PREFIX, sl[0]);
-            File parent = link.getParentFile();
-            if (parent != null) parent.mkdirs();
-            link.delete();
-            Os.symlink(sl[1], link.getAbsolutePath());
-        }
-
-        // chmod bin/ 下新解压的可执行文件
-        chmodBin(new File(App.PREFIX, "bin"));
-
-        // 解压后再扫描，diff 出本包新增的文件/符号链接，记录到清单
-        Set<String> after = scanPrefixFiles();
-        List<String> newFiles = new ArrayList<>();
-        for (String p : after) {
-            if (!before.contains(p)) newFiles.add(p);
-        }
-        // 符号链接清单里的 link 路径也要并入（scanPrefixFiles 已含符号链接，但保险起见补一次）
-        for (String[] sl : pkg.symlinks) {
-            if (!newFiles.contains(sl[0])) newFiles.add(sl[0]);
-        }
-        recordFileList(pkg.name, newFiles);
-
-        // 记录已安装版本
-        recordInstalled(pkg.name, pkg.version);
 
         if (isUpgrade) {
             return pkg.getDisplayName() + " 升级完成 " + installedVer + " → " + pkg.version
-                + "（新增 " + newFiles.size() + " 个文件，清理 " + upgradedRemoved + " 个旧版残留）";
+                + "\n" + out.toString().trim();
         }
-        return pkg.getDisplayName() + " 安装完成（" + newFiles.size() + " 个文件）";
+        return pkg.getDisplayName() + " 安装完成\n" + out.toString().trim();
     }
 
     /** 扫描 $PREFIX 下所有常规文件和符号链接，返回相对 prefix 的路径集合。
@@ -611,28 +582,51 @@ public final class PackageManager {
         return out;
     }
 
-    /** 读取已安装版本号，未安装返回 null */
+    /** 读取已安装版本号，未安装返回 null。
+     *
+     *  改造说明（真 apt 集成）:
+     *  旧实现读 $PREFIX/var/installed/<name>（App 端自维护），
+     *  现改为调用 dpkg -s <name> 解析 Version 字段，从 dpkg 标准状态库
+     *  /var/lib/dpkg/status 读取（dpkg -i / -r 后实时更新）。 */
     static String getInstalledVersion(String name) {
-        File f = new File(INSTALLED_DIR, name);
-        if (!f.isFile()) return null;
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(
-                new java.io.FileInputStream(f)))) {
-            return r.readLine();
+        try {
+            StringBuilder out = new StringBuilder();
+            int code = runDpkg(out, 10, "-s", name);
+            if (code != 0) return null;
+            // 解析 "Version: 1.2.3" 行
+            for (String line : out.toString().split("\n")) {
+                if (line.startsWith("Version:")) {
+                    return line.substring("Version:".length()).trim();
+                }
+            }
         } catch (Exception e) {
-            return null;
+            Log.w(TAG, "getInstalledVersion dpkg -s 失败: " + name + " " + e);
         }
+        return null;
     }
 
-    /** 列出所有已安装包及其版本，返回 name → version 映射 */
+    /** 列出所有已安装包及其版本，返回 name → version 映射。
+     *  从 dpkg status 解析（dpkg-query 避免手写 status 文件解析）。 */
     public static java.util.Map<String, String> listInstalledSync() {
         java.util.Map<String, String> out = new HashMap<>();
-        File dir = new File(INSTALLED_DIR);
-        File[] files = dir.listFiles((FilenameFilter) (d, n) ->
-            !n.endsWith(".files") && !n.startsWith("."));
-        if (files == null) return out;
-        for (File f : files) {
-            String ver = getInstalledVersion(f.getName());
-            if (ver != null) out.put(f.getName(), ver);
+        try {
+            StringBuilder sb = new StringBuilder();
+            // ${Package}\t${Version}，每行一个已装包（状态 installed）
+            int code = runCommand(java.util.Arrays.asList(
+                App.PREFIX + "/bin/dpkg-query",
+                "-W", "-f=${Package}\t${Version}\n"
+            ), sb, 30);
+            if (code != 0) return out;
+            for (String line : sb.toString().split("\n")) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                String[] parts = line.split("\t", 2);
+                if (parts.length == 2) {
+                    out.put(parts[0], parts[1]);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "listInstalledSync dpkg-query 失败: " + e);
         }
         return out;
     }
@@ -785,6 +779,91 @@ public final class PackageManager {
         if (code != 0) {
             throw new RuntimeException("tar 退出码 " + code + ": " + out.toString().trim());
         }
+    }
+
+    // ============================================================
+    // 真 apt / dpkg 客户端集成
+    //
+    // bootstrap 自带 apt 2.8.1 + dpkg 二进制（由 haisa-des-bootstrap CI 交叉编译），
+    // sources.list / trusted.gpg.d / apt.conf.d 在 apt 包 build.sh staging 阶段已配置好，
+    // 指向 https://xion-hn.github.io/haisa-des-repo/apt-repo（gh-pages 托管）。
+    //
+    // App 端 PackageManager 不再自己解压 .deb / 管理文件清单 / 做引用计数，
+    // 改为调用 dpkg -i / apt-get install / dpkg -r，由 dpkg 接管：
+    //   - 解压 .deb（data.tar.gz）
+    //   - 维护文件清单 /var/lib/dpkg/info/<pkg>.list
+    //   - 维护包状态 /var/lib/dpkg/status
+    //   - 依赖解析（apt-get install -y <name>）
+    //   - 升级时清理旧版残留（dpkg -i 自动处理）
+    //
+    // 运行环境变量（与 MainActivity.buildEnv 一致，确保能找到 $PREFIX/bin/dpkg
+    // 和加载 $PREFIX/lib 下的 .so）：
+    //   PATH=$PREFIX/bin  LD_LIBRARY_PATH=$PREFIX/lib
+    //   HOME=$HOME_PATH   TMPDIR=$PREFIX/tmp  PREFIX=$PREFIX
+    // ============================================================
+
+    /** 执行命令并捕获输出，返回退出码。输出追加到 out。
+     *  设置 $PREFIX 相关环境变量，确保 dpkg/apt 能找到自身和依赖库。 */
+    private static int runCommand(List<String> cmd, StringBuilder out, int timeoutSec) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.redirectErrorStream(true);
+        // 环境变量与 MainActivity.buildEnv 一致
+        pb.environment().put("PATH", App.PREFIX + "/bin");
+        pb.environment().put("LD_LIBRARY_PATH", App.PREFIX + "/lib");
+        pb.environment().put("HOME", App.HOME_PATH);
+        pb.environment().put("TMPDIR", App.PREFIX + "/tmp");
+        pb.environment().put("PREFIX", App.PREFIX);
+        Process p = pb.start();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+            String line;
+            while ((line = r.readLine()) != null) out.append(line).append('\n');
+        }
+        if (!p.waitFor(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)) {
+            p.destroy();
+            throw new RuntimeException("命令超时: " + String.join(" ", cmd));
+        }
+        return p.exitValue();
+    }
+
+    /** 执行 dpkg 命令，返回退出码，输出追加到 out */
+    private static int runDpkg(StringBuilder out, int timeoutSec, String... args) throws Exception {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(App.PREFIX + "/bin/dpkg");
+        Collections.addAll(cmd, args);
+        return runCommand(cmd, out, timeoutSec);
+    }
+
+    /** 执行 apt-get 命令，返回退出码，输出追加到 out。
+     *  apt-get 需先 apt-get update 拉取索引。 */
+    private static int runAptGet(StringBuilder out, int timeoutSec, String... args) throws Exception {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(App.PREFIX + "/bin/apt-get");
+        Collections.addAll(cmd, args);
+        return runCommand(cmd, out, timeoutSec);
+    }
+
+    /** 确认 dpkg/apt 二进制存在且可执行。
+     *  首次从 bootstrap 解压后应已存在；若缺失说明 bootstrap 未正确安装。
+     *  @throws RuntimeException 如果 dpkg/apt 缺失 */
+    private static void ensureDpkgAvailable() {
+        File dpkg = new File(App.PREFIX + "/bin/dpkg");
+        if (!dpkg.isFile()) {
+            throw new RuntimeException("dpkg 未安装: " + dpkg.getAbsolutePath()
+                + "（请先通过 BootstrapInstaller 安装 bootstrap，或 apt update）");
+        }
+    }
+
+    /** apt-get update：拉取 gh-pages 上的 Packages 索引到 $PREFIX/var/lib/apt/lists/。
+     *  在首次安装 / 手动刷新索引时调用。
+     *  @return apt-get 的输出 */
+    static String aptUpdateSync() throws Exception {
+        ensureDpkgAvailable();
+        StringBuilder out = new StringBuilder();
+        int code = runAptGet(out, 120, "update");
+        if (code != 0) {
+            throw new RuntimeException("apt-get update 失败 (code=" + code + "):\n" + out.toString().trim());
+        }
+        return out.toString();
     }
 
     /** chmod bin/ 目录下所有文件为 0755 */
